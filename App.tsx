@@ -20,24 +20,36 @@ const App: React.FC = () => {
   const socketRef = useRef<any>();
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const iceCandidatesQueue = useRef<RTCIceCandidate[]>([]);
 
   const PROFESSOR_PASSWORD = "aula";
 
   useEffect(() => {
     if (!isAuthenticated || !currentRoom) return;
+
     const socketUrl = window.location.hostname === 'localhost' ? 'http://localhost:8000' : window.location.origin;
     socketRef.current = io(socketUrl);
-    socketRef.current.on('other user', (userID: string) => callUser(userID));
+
+    socketRef.current.on('other user', (userID: string) => {
+      callUser(userID);
+    });
+
     socketRef.current.on('offer', handleReceiveOffer);
     socketRef.current.on('answer', handleAnswer);
     socketRef.current.on('ice-candidate', handleIceCandidateMsg);
-    return () => { socketRef.current?.disconnect(); };
+
+    return () => {
+      socketRef.current?.disconnect();
+    };
   }, [isAuthenticated, currentRoom]);
 
   const handleProfessorLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === PROFESSOR_PASSWORD) setIsAuthenticated(true);
-    else alert("Senha de professor incorreta");
+    if (password === PROFESSOR_PASSWORD) {
+      setIsAuthenticated(true);
+    } else {
+      alert("Senha de professor incorreta");
+    }
   };
 
   const createPeer = (userID: string): RTCPeerConnection => {
@@ -47,13 +59,30 @@ const App: React.FC = () => {
         { urls: 'stun:stun1.l.google.com:19302' }
       ]
     });
+
     peer.onicecandidate = (e) => {
       if (e.candidate) {
-        socketRef.current.emit('ice-candidate', { target: userID, candidate: e.candidate });
+        socketRef.current.emit('ice-candidate', {
+          target: userID,
+          candidate: e.candidate
+        });
       }
     };
-    peer.ontrack = (e) => setRemoteStream(e.streams[0]);
+
+    peer.ontrack = (e) => {
+      setRemoteStream(e.streams[0]);
+    };
+
     return peer;
+  };
+
+  const processIceQueue = () => {
+    if (peerRef.current && iceCandidatesQueue.current.length > 0) {
+        iceCandidatesQueue.current.forEach(candidate => {
+            peerRef.current?.addIceCandidate(candidate).catch(e => console.error(e));
+        });
+        iceCandidatesQueue.current = [];
+    }
   };
 
   const callUser = async (userID: string) => {
@@ -63,30 +92,52 @@ const App: React.FC = () => {
             peerRef.current?.addTrack(track, localStreamRef.current!);
         });
     }
+
     const offer = await peerRef.current.createOffer();
     await peerRef.current.setLocalDescription(offer);
-    socketRef.current.emit('offer', { target: userID, caller: socketRef.current.id, sdp: peerRef.current.localDescription });
+
+    socketRef.current.emit('offer', {
+      target: userID,
+      caller: socketRef.current.id,
+      sdp: peerRef.current.localDescription
+    });
   };
 
   async function handleReceiveOffer(payload: any) {
     peerRef.current = createPeer(payload.caller);
-    await peerRef.current.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+    const desc = new RTCSessionDescription(payload.sdp);
+    await peerRef.current.setRemoteDescription(desc);
+    
+    // Process any queued candidates now that remote desc is set
+    processIceQueue();
+
     if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(track => {
             peerRef.current?.addTrack(track, localStreamRef.current!);
         });
     }
+
     const answer = await peerRef.current.createAnswer();
     await peerRef.current.setLocalDescription(answer);
-    socketRef.current.emit('answer', { target: payload.caller, sdp: peerRef.current.localDescription });
+
+    socketRef.current.emit('answer', {
+      target: payload.caller,
+      sdp: peerRef.current.localDescription
+    });
   }
 
   function handleAnswer(payload: any) {
-    peerRef.current?.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+    const desc = new RTCSessionDescription(payload.sdp);
+    peerRef.current?.setRemoteDescription(desc).catch(e => console.error(e));
   }
 
   function handleIceCandidateMsg(candidate: RTCIceCandidate) {
-    peerRef.current?.addIceCandidate(new RTCIceCandidate(candidate));
+    const iceCandidate = new RTCIceCandidate(candidate);
+    if (peerRef.current && peerRef.current.remoteDescription) {
+        peerRef.current.addIceCandidate(iceCandidate).catch(e => console.error(e));
+    } else {
+        iceCandidatesQueue.current.push(iceCandidate);
+    }
   }
 
   const startMedia = async () => {
@@ -154,30 +205,48 @@ const App: React.FC = () => {
   };
 
   const enterPiP = async () => {
-    if (!('documentPictureInPicture' in window)) return;
+    if (!('documentPictureInPicture' in window)) {
+        alert("Seu navegador não suporta Document Picture-in-Picture. Use o Chrome ou Edge recente.");
+        return;
+    }
+
     try {
         // @ts-ignore
-        const pipWindow = await window.documentPictureInPicture.requestWindow({ width: 180, height: window.screen.height });
+        const pipWindow = await window.documentPictureInPicture.requestWindow({
+            width: 180,
+            height: window.screen.height,
+        });
+
         document.querySelectorAll('link[rel="stylesheet"], style').forEach((node) => {
             pipWindow.document.head.appendChild(node.cloneNode(true));
         });
+
+        // Correção de layout no PiP
         pipWindow.document.body.style.margin = '0';
+        pipWindow.document.body.style.padding = '0';
         pipWindow.document.body.style.backgroundColor = '#020617';
         pipWindow.document.body.style.overflow = 'hidden';
+
         const root = document.getElementById('root');
         if (root) {
+            // Força o root a ocupar tudo no PiP
             root.style.width = '100%';
             root.style.height = '100%';
+            
             pipWindow.document.body.appendChild(root);
             setIsPipActive(true);
+
             pipWindow.addEventListener('pagehide', () => {
+                // Reseta estilos ao voltar
                 root.style.width = '';
                 root.style.height = '';
                 document.body.appendChild(root);
                 setIsPipActive(false);
             });
         }
-    } catch (err) { console.error(err); }
+    } catch (err) {
+        console.error("PiP error:", err);
+    }
   };
 
   if (!userRole) {
@@ -209,7 +278,9 @@ const App: React.FC = () => {
           <button onClick={() => setUserRole(null)} className="text-slate-500 text-xs mb-4 hover:text-white">← Voltar</button>
           <h2 className="text-xl font-bold text-white mb-6 text-center">Acesso do Professor</h2>
           <input 
-            type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+            type="password" 
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
             placeholder="Sua senha privada"
             className="w-full bg-slate-800 border border-slate-700 rounded-lg py-3 px-4 text-white mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
             autoFocus
@@ -225,11 +296,18 @@ const App: React.FC = () => {
   if (!currentRoom) {
     return (
       <div className="h-screen w-full bg-slate-950 flex items-center justify-center p-4">
-        <form onSubmit={(e) => { e.preventDefault(); if (roomCode.trim()) { setIsAuthenticated(true); setCurrentRoom(roomCode.trim()); } }} className="bg-slate-900 p-8 rounded-xl border border-slate-800 shadow-2xl w-full max-w-sm">
+        <form onSubmit={(e) => { e.preventDefault(); if(roomCode.trim()) { setIsAuthenticated(true); setCurrentRoom(roomCode.trim()); }}} className="bg-slate-900 p-8 rounded-xl border border-slate-800 shadow-2xl w-full max-w-sm">
           <button onClick={() => { setIsAuthenticated(false); setUserRole(null); }} className="text-slate-500 text-xs mb-4 hover:text-white">← Voltar</button>
-          <h2 className="text-xl font-bold text-white mb-2 text-center">{userRole === 'professor' ? 'Criar Sala' : 'Entrar na Sala'}</h2>
+          <h2 className="text-xl font-bold text-white mb-2 text-center">
+            {userRole === 'professor' ? 'Criar Sala' : 'Entrar na Sala'}
+          </h2>
+          <p className="text-slate-500 text-xs text-center mb-6">
+            {userRole === 'professor' ? 'Crie um código para compartilhar com seu aluno' : 'Digite o código que seu professor forneceu'}
+          </p>
           <input 
-            type="text" value={roomCode} onChange={(e) => setRoomCode(e.target.value)}
+            type="text" 
+            value={roomCode}
+            onChange={(e) => setRoomCode(e.target.value)}
             placeholder="Ex: aula-de-hoje"
             className="w-full bg-slate-800 border border-slate-700 rounded-lg py-3 px-4 text-white mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500 uppercase font-mono"
             autoFocus
@@ -251,6 +329,9 @@ const App: React.FC = () => {
             <p className="text-xl">O seu conteúdo de ensino aparecerá aqui.</p>
             <div className="mt-6 flex flex-col items-center gap-2">
                 <span className="text-xs bg-blue-600/30 text-blue-400 px-3 py-1 rounded-full border border-blue-500/30 uppercase font-bold tracking-widest">SALA: {currentRoom}</span>
+                <p className="text-sm bg-slate-800/50 p-4 rounded-lg border border-white/10 max-w-xs">
+                Clique no ícone de "duas janelas" no topo da barra para flutuar o app.
+                </p>
             </div>
           </div>
         </div>
