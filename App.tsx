@@ -5,7 +5,6 @@ import { CallState } from './types';
 import io from 'socket.io-client';
 
 const App: React.FC = () => {
-  const [userRole, setUserRole] = useState<'professor' | 'aluno' | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState('');
   const [roomCode, setRoomCode] = useState('');
@@ -22,34 +21,67 @@ const App: React.FC = () => {
   const localStreamRef = useRef<MediaStream | null>(null);
   const iceCandidatesQueue = useRef<RTCIceCandidate[]>([]);
 
-  const PROFESSOR_PASSWORD = "aula";
+  const ACCESS_PASSWORD = "aula"; // Sua senha única (altere aqui quando quiser)
 
   useEffect(() => {
     if (!isAuthenticated || !currentRoom) return;
+
     const socketUrl = window.location.hostname === 'localhost' ? 'http://localhost:8000' : window.location.origin;
     socketRef.current = io(socketUrl);
-    socketRef.current.on('other user', (userID: string) => callUser(userID));
+
+    socketRef.current.on('other user', (userID: string) => {
+      callUser(userID);
+    });
+
     socketRef.current.on('offer', handleReceiveOffer);
     socketRef.current.on('answer', handleAnswer);
     socketRef.current.on('ice-candidate', handleIceCandidateMsg);
-    return () => { socketRef.current?.disconnect(); };
+
+    return () => {
+      socketRef.current?.disconnect();
+    };
   }, [isAuthenticated, currentRoom]);
 
-  const handleProfessorLogin = (e: React.FormEvent) => {
+  const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === PROFESSOR_PASSWORD) setIsAuthenticated(true);
-    else alert("Senha incorreta");
+    if (password === ACCESS_PASSWORD) {
+      setIsAuthenticated(true);
+    } else {
+      alert("Senha incorreta");
+    }
   };
 
   const createPeer = (userID: string): RTCPeerConnection => {
     const peer = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+      ]
     });
+
     peer.onicecandidate = (e) => {
-      if (e.candidate) socketRef.current.emit('ice-candidate', { target: userID, candidate: e.candidate });
+      if (e.candidate) {
+        socketRef.current.emit('ice-candidate', {
+          target: userID,
+          candidate: e.candidate
+        });
+      }
     };
-    peer.ontrack = (e) => setRemoteStream(e.streams[0]);
+
+    peer.ontrack = (e) => {
+      setRemoteStream(e.streams[0]);
+    };
+
     return peer;
+  };
+
+  const processIceQueue = () => {
+    if (peerRef.current && iceCandidatesQueue.current.length > 0) {
+        iceCandidatesQueue.current.forEach(candidate => {
+            peerRef.current?.addIceCandidate(candidate).catch(e => console.error(e));
+        });
+        iceCandidatesQueue.current = [];
+    }
   };
 
   const callUser = async (userID: string) => {
@@ -59,32 +91,48 @@ const App: React.FC = () => {
             peerRef.current?.addTrack(track, localStreamRef.current!);
         });
     }
+
     const offer = await peerRef.current.createOffer();
     await peerRef.current.setLocalDescription(offer);
-    socketRef.current.emit('offer', { target: userID, caller: socketRef.current.id, sdp: peerRef.current.localDescription });
+
+    socketRef.current.emit('offer', {
+      target: userID,
+      caller: socketRef.current.id,
+      sdp: peerRef.current.localDescription
+    });
   };
 
   async function handleReceiveOffer(payload: any) {
     peerRef.current = createPeer(payload.caller);
-    await peerRef.current.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+    const desc = new RTCSessionDescription(payload.sdp);
+    await peerRef.current.setRemoteDescription(desc);
+    
+    processIceQueue();
+
     if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(track => {
             peerRef.current?.addTrack(track, localStreamRef.current!);
         });
     }
+
     const answer = await peerRef.current.createAnswer();
     await peerRef.current.setLocalDescription(answer);
-    socketRef.current.emit('answer', { target: payload.caller, sdp: peerRef.current.localDescription });
+
+    socketRef.current.emit('answer', {
+      target: payload.caller,
+      sdp: peerRef.current.localDescription
+    });
   }
 
   function handleAnswer(payload: any) {
-    peerRef.current?.setRemoteDescription(new RTCSessionDescription(payload.sdp)).catch(console.error);
+    const desc = new RTCSessionDescription(payload.sdp);
+    peerRef.current?.setRemoteDescription(desc).catch(e => console.error(e));
   }
 
   function handleIceCandidateMsg(candidate: RTCIceCandidate) {
     const iceCandidate = new RTCIceCandidate(candidate);
     if (peerRef.current && peerRef.current.remoteDescription) {
-        peerRef.current.addIceCandidate(iceCandidate).catch(console.error);
+        peerRef.current.addIceCandidate(iceCandidate).catch(e => console.error(e));
     } else {
         iceCandidatesQueue.current.push(iceCandidate);
     }
@@ -93,13 +141,17 @@ const App: React.FC = () => {
   const startMedia = async () => {
     try {
       setCallState(CallState.CONNECTING);
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true
+      });
       setLocalStream(stream);
       localStreamRef.current = stream;
       socketRef.current.emit('join', currentRoom);
       setCallState(CallState.ACTIVE);
     } catch (error) {
-      alert("Permita acesso à câmera e microfone.");
+      console.error("Erro ao acessar mídia:", error);
+      alert("Por favor, permita acesso à câmera e microfone.");
       setCallState(CallState.IDLE);
     }
   };
@@ -110,7 +162,10 @@ const App: React.FC = () => {
     setLocalStream(null);
     setRemoteStream(null);
     setCallState(CallState.IDLE);
-    if (peerRef.current) { peerRef.current.close(); peerRef.current = null; }
+    if (peerRef.current) {
+      peerRef.current.close();
+      peerRef.current = null;
+    }
   };
 
   const toggleScreenShare = async () => {
@@ -121,39 +176,57 @@ const App: React.FC = () => {
       try {
         const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
         setScreenStream(stream);
-      } catch (err) { console.error(err); }
+      } catch (err) {
+        console.error("Erro ao compartilhar tela:", err);
+      }
     }
   };
 
   const enterPiP = async () => {
-    if (!('documentPictureInPicture' in window)) return;
+    if (!('documentPictureInPicture' in window)) {
+        alert("Seu navegador não suporta Document Picture-in-Picture.");
+        return;
+    }
+
     try {
         // @ts-ignore
-        const pipWindow = await window.documentPictureInPicture.requestWindow({ width: 180, height: window.screen.height });
+        const pipWindow = await window.documentPictureInPicture.requestWindow({
+            width: 180,
+            height: window.screen.height,
+        });
+
         document.querySelectorAll('link[rel="stylesheet"], style').forEach((node) => {
             pipWindow.document.head.appendChild(node.cloneNode(true));
         });
+
         pipWindow.document.body.style.margin = '0';
+        pipWindow.document.body.style.padding = '0';
         pipWindow.document.body.style.backgroundColor = '#020617';
+        pipWindow.document.body.style.overflow = 'hidden';
+
         const root = document.getElementById('root');
         if (root) {
             root.style.width = '100%';
             root.style.height = '100%';
             pipWindow.document.body.appendChild(root);
             setIsPipActive(true);
+
             pipWindow.addEventListener('pagehide', () => {
-                root.style.width = ''; root.style.height = '';
+                root.style.width = '';
+                root.style.height = '';
                 document.body.appendChild(root);
                 setIsPipActive(false);
             });
         }
-    } catch (err) { console.error(err); }
+    } catch (err) {
+        console.error("PiP error:", err);
+    }
   };
 
   return (
     <div className="flex h-screen w-full bg-[#111] justify-end overflow-hidden">
       {!isPipActive && (
-        <div className="flex-1 bg-[#757575] flex items-center justify-center p-8 hidden md:flex relative">
+        <div className="flex-1 bg-[#757575] flex items-center justify-center p-8 hidden md:flex">
           <div className="text-center">
             <h1 className="text-[64px] font-medium text-white/20 mb-2 tracking-tight">GantMeet</h1>
             <p className="text-xl text-white/20 mb-12">O seu conteúdo de ensino aparecerá aqui.</p>
@@ -176,8 +249,7 @@ const App: React.FC = () => {
         remoteStream={remoteStream}
         isSharingScreen={!!screenStream}
         screenStream={screenStream}
-        userRole={userRole}
-        setUserRole={setUserRole}
+        // Novas props simplificadas
         isAuthenticated={isAuthenticated}
         setIsAuthenticated={setIsAuthenticated}
         currentRoom={currentRoom}
@@ -186,7 +258,7 @@ const App: React.FC = () => {
         setPassword={setPassword}
         roomCode={roomCode}
         setRoomCode={setRoomCode}
-        onProfessorLogin={handleProfessorLogin}
+        onLogin={handleLogin}
       />
     </div>
   );
