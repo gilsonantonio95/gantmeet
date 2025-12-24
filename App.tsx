@@ -14,14 +14,17 @@ const App: React.FC = () => {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
+  const [remoteScreenStream, setRemoteScreenStream] = useState<MediaStream | null>(null);
   const [isPipActive, setIsPipActive] = useState(false);
 
   const socketRef = useRef<any>();
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const screenStreamRef = useRef<MediaStream | null>(null);
+  const screenSenderRef = useRef<RTCRtpSender | null>(null);
   const iceCandidatesQueue = useRef<RTCIceCandidate[]>([]);
 
-  const ACCESS_PASSWORD = "aula"; // Sua senha única (altere aqui quando quiser)
+  const ACCESS_PASSWORD = "aula";
 
   useEffect(() => {
     if (!isAuthenticated || !currentRoom) return;
@@ -42,15 +45,6 @@ const App: React.FC = () => {
     };
   }, [isAuthenticated, currentRoom]);
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (password === ACCESS_PASSWORD) {
-      setIsAuthenticated(true);
-    } else {
-      alert("Senha incorreta");
-    }
-  };
-
   const createPeer = (userID: string): RTCPeerConnection => {
     const peer = new RTCPeerConnection({
       iceServers: [
@@ -69,7 +63,26 @@ const App: React.FC = () => {
     };
 
     peer.ontrack = (e) => {
-      setRemoteStream(e.streams[0]);
+      const stream = e.streams[0];
+      // Distinguir entre stream de câmera e stream de tela
+      // No nosso caso simples, o primeiro stream é câmera, o segundo é tela
+      if (e.transceiver.mid === '1' || e.track.label.includes('screen') || e.streams.length > 1) {
+          // Lógica simplificada: se já temos remoteStream, o próximo é tela
+          setRemoteScreenStream(stream);
+      } else {
+          setRemoteStream(stream);
+      }
+
+      // Versão mais robusta para múltiplas tracks
+      if (e.streams && e.streams[0]) {
+          const stream = e.streams[0];
+          // Se o stream ID for diferente do que já temos para vídeo, é tela
+          if (remoteStream && stream.id !== remoteStream.id) {
+              setRemoteScreenStream(stream);
+          } else if (!remoteStream) {
+              setRemoteStream(stream);
+          }
+      }
     };
 
     return peer;
@@ -86,9 +99,18 @@ const App: React.FC = () => {
 
   const callUser = async (userID: string) => {
     peerRef.current = createPeer(userID);
+    
+    // Adicionar tracks de câmera
     if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(track => {
             peerRef.current?.addTrack(track, localStreamRef.current!);
+        });
+    }
+
+    // Adicionar tracks de tela se já estiver compartilhando
+    if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach(track => {
+            screenSenderRef.current = peerRef.current!.addTrack(track, screenStreamRef.current!);
         });
     }
 
@@ -112,6 +134,12 @@ const App: React.FC = () => {
     if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(track => {
             peerRef.current?.addTrack(track, localStreamRef.current!);
+        });
+    }
+
+    if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach(track => {
+            screenSenderRef.current = peerRef.current!.addTrack(track, screenStreamRef.current!);
         });
     }
 
@@ -159,8 +187,11 @@ const App: React.FC = () => {
   const stopMedia = () => {
     localStream?.getTracks().forEach(track => track.stop());
     remoteStream?.getTracks().forEach(track => track.stop());
+    screenStream?.getTracks().forEach(track => track.stop());
     setLocalStream(null);
     setRemoteStream(null);
+    setScreenStream(null);
+    setRemoteScreenStream(null);
     setCallState(CallState.IDLE);
     if (peerRef.current) {
       peerRef.current.close();
@@ -171,11 +202,44 @@ const App: React.FC = () => {
   const toggleScreenShare = async () => {
     if (screenStream) {
       screenStream.getTracks().forEach(track => track.stop());
+      if (screenSenderRef.current && peerRef.current) {
+          peerRef.current.removeTrack(screenSenderRef.current);
+          screenSenderRef.current = null;
+          // Re-negociar para informar que a tela parou
+          const offer = await peerRef.current.createOffer();
+          await peerRef.current.setLocalDescription(offer);
+          socketRef.current.emit('offer', {
+              target: socketRef.current.id, // Simplificação: em 1:1 enviamos para o outro
+              sdp: peerRef.current.localDescription
+          });
+      }
       setScreenStream(null);
+      screenStreamRef.current = null;
     } else {
       try {
         const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
         setScreenStream(stream);
+        screenStreamRef.current = stream;
+
+        if (peerRef.current) {
+            const track = stream.getVideoTracks()[0];
+            screenSenderRef.current = peerRef.current.addTrack(track, stream);
+            
+            // Re-negociar para enviar a nova track
+            const offer = await peerRef.current.createOffer();
+            await peerRef.current.setLocalDescription(offer);
+            // Aqui precisaríamos do ID do outro usuário. 
+            // Para o protótipo, o servidor pode fazer broadcast do offer atualizado.
+            socketRef.current.emit('offer', {
+                target: "broadcast-in-room", // Sinalizador especial para o servidor
+                sdp: peerRef.current.localDescription,
+                caller: socketRef.current.id
+            });
+        }
+
+        stream.getVideoTracks()[0].onended = () => {
+            toggleScreenShare();
+        };
       } catch (err) {
         console.error("Erro ao compartilhar tela:", err);
       }
@@ -192,7 +256,7 @@ const App: React.FC = () => {
         // @ts-ignore
         const pipWindow = await window.documentPictureInPicture.requestWindow({
             width: 180,
-            height: window.screen.height,
+            height: window.screen.height, // Altura total da tela
         });
 
         document.querySelectorAll('link[rel="stylesheet"], style').forEach((node) => {
@@ -249,7 +313,7 @@ const App: React.FC = () => {
         remoteStream={remoteStream}
         isSharingScreen={!!screenStream}
         screenStream={screenStream}
-        // Novas props simplificadas
+        remoteScreenStream={remoteScreenStream}
         isAuthenticated={isAuthenticated}
         setIsAuthenticated={setIsAuthenticated}
         currentRoom={currentRoom}
