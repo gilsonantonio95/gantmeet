@@ -6,39 +6,37 @@ const path = require('path');
 
 const app = express();
 app.use(cors());
-
-// Serve static files from the React app
 app.use(express.static(path.join(__dirname, '../dist')));
 
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
+  cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
 const rooms = {};
 
 io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
-
   socket.on('join', (roomID) => {
     socket.join(roomID);
-    if (rooms[roomID]) {
-      rooms[roomID].push(socket.id);
-    } else {
-      rooms[roomID] = [socket.id];
-    }
+    if (!rooms[roomID]) rooms[roomID] = [];
+    rooms[roomID].push(socket.id);
+    
     const otherUser = rooms[roomID].find(id => id !== socket.id);
     if (otherUser) {
       socket.emit('other user', otherUser);
-      socket.to(otherUser).emit('user joined', socket.id);
     }
   });
 
   socket.on('offer', (payload) => {
-    io.to(payload.target).emit('offer', payload);
+    if (payload.target === "broadcast-in-room") {
+        // Enviar para todos os outros na mesma sala
+        const roomID = Array.from(socket.rooms).find(r => r !== socket.id);
+        if (roomID) {
+            socket.to(roomID).emit('offer', payload);
+        }
+    } else {
+        io.to(payload.target).emit('offer', payload);
+    }
   });
 
   socket.on('answer', (payload) => {
@@ -57,12 +55,9 @@ io.on('connection', (socket) => {
     Object.keys(rooms).forEach(roomID => {
       rooms[roomID] = rooms[roomID].filter(id => id !== socket.id);
     });
-    console.log('User disconnected:', socket.id);
   });
 });
 
-// The "catchall" handler: for any request that doesn't
-// match one above, send back React's index.html file.
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../dist/index.html'));
 });

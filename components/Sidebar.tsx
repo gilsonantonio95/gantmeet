@@ -15,7 +15,6 @@ interface SidebarProps {
   isSharingScreen: boolean;
   screenStream: MediaStream | null;
   remoteScreenStream: MediaStream | null;
-  
   isAuthenticated: boolean;
   setIsAuthenticated: (auth: boolean) => void;
   currentRoom: string;
@@ -48,19 +47,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onLogin
 }) => {
   
+  const SIDEBAR_WIDTH = "w-[220px]"; // Aumentado de 180px para 220px
+
   if (!isAuthenticated) {
     return (
-      <div className="w-[180px] h-screen bg-slate-950 border-l border-slate-800 flex flex-col shadow-2xl z-50 p-3">
+      <div className={`${SIDEBAR_WIDTH} h-screen bg-slate-950 border-l border-slate-800 flex flex-col shadow-2xl z-50 p-3`}>
         <div className="flex items-center gap-1.5 mb-8 justify-center py-2 border-b border-slate-800">
           <div className="w-5 h-5 bg-blue-600 rounded flex items-center justify-center font-bold text-[10px] text-white">G</div>
           <h1 className="text-[10px] font-bold text-white tracking-tight">GantMeet</h1>
         </div>
         <form onSubmit={onLogin} className="flex flex-col gap-3">
-          <p className="text-[9px] text-slate-500 uppercase font-bold text-center">Senha de Acesso</p>
-          <input 
-            type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-            className="bg-slate-800 border border-slate-700 rounded p-2 text-white text-[10px] outline-none" autoFocus
-          />
+          <p className="text-[9px] text-slate-500 uppercase font-bold text-center">Senha</p>
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="bg-slate-800 border border-slate-700 rounded p-2 text-white text-[10px] outline-none" autoFocus />
           <button type="submit" className="bg-blue-600 text-white text-[10px] font-bold py-2 rounded">Entrar</button>
         </form>
       </div>
@@ -69,17 +67,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   if (!currentRoom) {
     return (
-      <div className="w-[180px] h-screen bg-slate-950 border-l border-slate-800 flex flex-col shadow-2xl z-50 p-3">
+      <div className={`${SIDEBAR_WIDTH} h-screen bg-slate-950 border-l border-slate-800 flex flex-col shadow-2xl z-50 p-3`}>
         <div className="flex items-center gap-1.5 mb-8 justify-center py-2 border-b border-slate-800">
           <div className="w-5 h-5 bg-blue-600 rounded flex items-center justify-center font-bold text-[10px] text-white">G</div>
           <h1 className="text-[10px] font-bold text-white tracking-tight">GantMeet</h1>
         </div>
         <form onSubmit={(e) => { e.preventDefault(); if(roomCode.trim()) setCurrentRoom(roomCode.trim().toUpperCase()); }} className="flex flex-col gap-3">
           <p className="text-[9px] text-slate-500 uppercase font-bold text-center">Sala</p>
-          <input 
-            type="text" value={roomCode} onChange={(e) => setRoomCode(e.target.value)}
-            className="bg-slate-800 border border-slate-700 rounded p-2 text-white text-[10px] outline-none uppercase font-mono" autoFocus
-          />
+          <input type="text" value={roomCode} onChange={(e) => setRoomCode(e.target.value)} className="bg-slate-800 border border-slate-700 rounded p-2 text-white text-[10px] outline-none uppercase font-mono" autoFocus />
           <button type="submit" className="bg-blue-600 text-white text-[10px] font-bold py-2 rounded">Acessar</button>
         </form>
       </div>
@@ -87,7 +82,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   }
 
   return (
-    <div className="w-[180px] h-screen bg-slate-950 border-l border-slate-800 flex flex-col shadow-2xl z-50">
+    <div className={`${SIDEBAR_WIDTH} h-screen bg-slate-950 border-l border-slate-800 flex flex-col shadow-2xl z-50`}>
       <div className="p-2 flex items-center justify-between border-b border-slate-800 shrink-0">
         <div className="flex items-center gap-1.5">
           <div className="min-w-[20px] w-5 h-5 bg-blue-600 rounded flex items-center justify-center font-bold text-[10px] text-white">G</div>
@@ -100,20 +95,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
       </div>
 
-      {/* Área com Scroll Vertical se necessário */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden p-1.5 space-y-2 custom-scrollbar">
-        <VideoFeed stream={localStream} label="Prof." isMuted isMirror />
-        <VideoFeed stream={remoteStream} label="Aluno" />
+        <VideoFeed stream={localStream} label="Você" isMuted isMirror />
+        <VideoFeed stream={remoteStream} label="Remoto" />
         
-        {/* Mostra a tela local ou a tela remota */}
+        {/* Mostra o vídeo da tela compartilhada recebida (do aluno/outro) ou a própria tela se estiver compartilhando */}
         {(isSharingScreen || remoteScreenStream) && (
             <VideoFeed 
-                stream={isSharingScreen ? screenStream : remoteScreenStream} 
-                label="Tela" 
+                stream={remoteScreenStream || screenStream} 
+                label="Conteúdo" 
             />
         )}
 
-        {/* Chat movido para dentro da área de scroll na Sidebar para dar mais espaço vertical */}
         <div className="h-[250px] mt-4 border-t border-slate-800 pt-2">
             <Chat />
         </div>
