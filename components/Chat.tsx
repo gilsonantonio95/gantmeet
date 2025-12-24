@@ -1,26 +1,27 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Message } from '../types';
-import io from 'socket.io-client';
 
-export const Chat: React.FC = () => {
+interface ChatProps {
+  socket: any;
+}
+
+export const Chat: React.FC<ChatProps> = ({ socket }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
-  const socketRef = useRef<any>();
 
   useEffect(() => {
-    const socketUrl = window.location.hostname === 'localhost' ? 'http://localhost:8000' : window.location.origin;
-    socketRef.current = io(socketUrl);
+    if (!socket) return;
 
-    socketRef.current.on('chat-message', (message: Message) => {
+    socket.on('chat-message', (message: Message) => {
       setMessages(prev => [...prev, message]);
     });
 
     return () => {
-      socketRef.current.disconnect();
+      socket.off('chat-message');
     };
-  }, []);
+  }, [socket]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -30,7 +31,7 @@ export const Chat: React.FC = () => {
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim()) return;
+    if (!inputText.trim() || !socket) return;
 
     const newMessage: Message = {
       id: Date.now().toString(),
@@ -39,7 +40,7 @@ export const Chat: React.FC = () => {
       timestamp: new Date()
     };
 
-    socketRef.current.emit('send-chat-message', newMessage);
+    socket.emit('send-chat-message', newMessage);
     setMessages(prev => [...prev, newMessage]);
     setInputText('');
   };

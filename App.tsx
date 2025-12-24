@@ -10,13 +10,13 @@ const App: React.FC = () => {
   const [password, setPassword] = useState('');
   const [roomCode, setRoomCode] = useState('');
   const [currentRoom, setCurrentRoom] = useState('');
+  const [socket, setSocket] = useState<any>(null);
   
   const [callState, setCallState] = useState<CallState>(CallState.IDLE);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [isPipActive, setIsPipActive] = useState(false);
 
-  const socketRef = useRef<any>();
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const iceCandidatesQueue = useRef<RTCIceCandidate[]>([]);
@@ -27,18 +27,20 @@ const App: React.FC = () => {
     if (!isAuthenticated || !currentRoom) return;
 
     const socketUrl = window.location.hostname === 'localhost' ? 'http://localhost:8000' : window.location.origin;
-    socketRef.current = io(socketUrl);
+    const newSocket = io(socketUrl);
+    setSocket(newSocket);
 
-    socketRef.current.on('other user', (userID: string) => {
-      callUser(userID);
+    newSocket.on('other user', (userID: string) => {
+      callUser(userID, newSocket);
     });
 
-    socketRef.current.on('offer', handleReceiveOffer);
-    socketRef.current.on('answer', handleAnswer);
-    socketRef.current.on('ice-candidate', handleIceCandidateMsg);
+    newSocket.on('offer', (payload: any) => handleReceiveOffer(payload, newSocket));
+    newSocket.on('answer', handleAnswer);
+    newSocket.on('ice-candidate', handleIceCandidateMsg);
 
     return () => {
-      socketRef.current?.disconnect();
+      newSocket.disconnect();
+      setSocket(null);
     };
   }, [isAuthenticated, currentRoom]);
 
@@ -51,14 +53,14 @@ const App: React.FC = () => {
     }
   };
 
-  const createPeer = (userID: string): RTCPeerConnection => {
+  const createPeer = (userID: string, activeSocket: any): RTCPeerConnection => {
     const peer = new RTCPeerConnection({
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
 
     peer.onicecandidate = (e) => {
-      if (e.candidate) {
-        socketRef.current.emit('ice-candidate', {
+      if (e.candidate && activeSocket) {
+        activeSocket.emit('ice-candidate', {
           target: userID,
           candidate: e.candidate
         });
@@ -81,8 +83,8 @@ const App: React.FC = () => {
     }
   };
 
-  const callUser = async (userID: string) => {
-    peerRef.current = createPeer(userID);
+  const callUser = async (userID: string, activeSocket: any) => {
+    peerRef.current = createPeer(userID, activeSocket);
     if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(track => {
             peerRef.current?.addTrack(track, localStreamRef.current!);
@@ -90,15 +92,15 @@ const App: React.FC = () => {
     }
     const offer = await peerRef.current.createOffer();
     await peerRef.current.setLocalDescription(offer);
-    socketRef.current.emit('offer', {
+    activeSocket.emit('offer', {
       target: userID,
-      caller: socketRef.current.id,
+      caller: activeSocket.id,
       sdp: peerRef.current.localDescription
     });
   };
 
-  async function handleReceiveOffer(payload: any) {
-    peerRef.current = createPeer(payload.caller);
+  async function handleReceiveOffer(payload: any, activeSocket: any) {
+    peerRef.current = createPeer(payload.caller, activeSocket);
     await peerRef.current.setRemoteDescription(new RTCSessionDescription(payload.sdp));
     processIceQueue();
     if (localStreamRef.current) {
@@ -108,7 +110,7 @@ const App: React.FC = () => {
     }
     const answer = await peerRef.current.createAnswer();
     await peerRef.current.setLocalDescription(answer);
-    socketRef.current.emit('answer', {
+    activeSocket.emit('answer', {
       target: payload.caller,
       sdp: peerRef.current.localDescription
     });
@@ -132,7 +134,7 @@ const App: React.FC = () => {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       setLocalStream(stream);
       localStreamRef.current = stream;
-      socketRef.current.emit('join', currentRoom);
+      if (socket) socket.emit('join', currentRoom);
       setCallState(CallState.ACTIVE);
     } catch (error) {
       alert("Permita acesso à câmera e microfone.");
@@ -177,8 +179,8 @@ const App: React.FC = () => {
     <div className="flex h-screen w-full bg-[#111] justify-end overflow-hidden">
       {!isPipActive && (
         <div className="flex-1 bg-[#1e1e1e] flex items-center justify-center hidden md:flex relative overflow-hidden">
-          {isAuthenticated && currentRoom ? (
-            <Whiteboard socket={socketRef.current} currentRoom={currentRoom} />
+          {isAuthenticated && currentRoom && socket ? (
+            <Whiteboard socket={socket} currentRoom={currentRoom} />
           ) : (
             <div className="text-center">
               <h1 className="text-[64px] font-medium text-white/10 mb-2 tracking-tight">GantMeet</h1>
@@ -192,7 +194,7 @@ const App: React.FC = () => {
         callState={callState}
         onStartCall={startMedia}
         onEndCall={stopMedia}
-        onShareScreen={() => {}} // Função desativada
+        onShareScreen={() => {}}
         onToggleAlwaysOnTop={enterPiP}
         localStream={localStream}
         remoteStream={remoteStream}
@@ -208,6 +210,7 @@ const App: React.FC = () => {
         roomCode={roomCode}
         setRoomCode={setRoomCode}
         onLogin={handleLogin}
+        socket={socket}
       />
     </div>
   );

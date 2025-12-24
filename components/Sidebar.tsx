@@ -24,6 +24,7 @@ interface SidebarProps {
   roomCode: string;
   setRoomCode: (code: string) => void;
   onLogin: (e: React.FormEvent) => void;
+  socket: any;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -44,10 +45,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setPassword,
   roomCode,
   setRoomCode,
-  onLogin
+  onLogin,
+  socket
 }) => {
   
-  const SIDEBAR_WIDTH = "w-[220px]"; // Aumentado de 180px para 220px
+  const SIDEBAR_WIDTH = "w-[220px]";
 
   if (!isAuthenticated) {
     return (
@@ -99,16 +101,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <VideoFeed stream={localStream} label="Você" isMuted isMirror />
         <VideoFeed stream={remoteStream} label="Remoto" />
         
-        {/* Mostra o vídeo da tela compartilhada recebida (do aluno/outro) ou a própria tela se estiver compartilhando */}
-        {(isSharingScreen || remoteScreenStream) && (
-            <VideoFeed 
-                stream={remoteScreenStream || screenStream} 
-                label="Conteúdo" 
-            />
-        )}
-
-        <div className="h-[250px] mt-4 border-t border-slate-800 pt-2">
-            <Chat />
+        <div className="h-[350px] mt-4 border-t border-slate-800 pt-2">
+            <Chat socket={socket} />
         </div>
       </div>
 
@@ -117,9 +111,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <button onClick={onStartCall} className="w-full bg-blue-600 text-white text-[10px] font-bold py-2 rounded">Iniciar</button>
         ) : (
           <div className="flex flex-col gap-1.5">
-            <button onClick={onShareScreen} className={`w-full ${isSharingScreen ? 'bg-orange-600' : 'bg-slate-700'} text-white text-[9px] font-bold py-1.5 rounded`}>
-              {isSharingScreen ? 'Parar Tela' : 'Compartilhar'}
-            </button>
             <button onClick={onEndCall} className="w-full bg-red-600 text-white text-[9px] font-bold py-1.5 rounded">Sair</button>
           </div>
         )}
