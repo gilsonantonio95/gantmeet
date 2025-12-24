@@ -5,8 +5,12 @@ import { CallState } from './types';
 import io from 'socket.io-client';
 
 const App: React.FC = () => {
+  const [userRole, setUserRole] = useState<'professor' | 'aluno' | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState('');
+  const [roomCode, setRoomCode] = useState('');
+  const [currentRoom, setCurrentRoom] = useState('');
+  
   const [callState, setCallState] = useState<CallState>(CallState.IDLE);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
@@ -17,17 +21,10 @@ const App: React.FC = () => {
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
 
-  const roomID = "aula-123";
-  const ACCESS_PASSWORD = "aula"; // Você pode mudar esta senha
+  const PROFESSOR_PASSWORD = "aula"; // Senha privada do professor
 
   useEffect(() => {
-    // Check if already authenticated in this session
-    const auth = sessionStorage.getItem('isAuth');
-    if (auth === 'true') setIsAuthenticated(true);
-  }, []);
-
-  useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || !currentRoom) return;
 
     const socketUrl = window.location.hostname === 'localhost' ? 'http://localhost:8000' : window.location.origin;
     socketRef.current = io(socketUrl);
@@ -43,15 +40,29 @@ const App: React.FC = () => {
     return () => {
       socketRef.current?.disconnect();
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, currentRoom]);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleProfessorLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === ACCESS_PASSWORD) {
+    if (password === PROFESSOR_PASSWORD) {
       setIsAuthenticated(true);
-      sessionStorage.setItem('isAuth', 'true');
     } else {
-      alert("Senha incorreta");
+      alert("Senha de professor incorreta");
+    }
+  };
+
+  const handleCreateRoom = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (roomCode.trim()) {
+      setCurrentRoom(roomCode.trim());
+    }
+  };
+
+  const handleJoinRoom = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (roomCode.trim()) {
+      setIsAuthenticated(true); // Aluno "autentica" entrando na sala
+      setCurrentRoom(roomCode.trim());
     }
   };
 
@@ -133,7 +144,7 @@ const App: React.FC = () => {
       });
       setLocalStream(stream);
       localStreamRef.current = stream;
-      socketRef.current.emit('join', roomID);
+      socketRef.current.emit('join', currentRoom);
       setCallState(CallState.ACTIVE);
     } catch (error) {
       console.error("Erro ao acessar mídia:", error);
@@ -206,18 +217,27 @@ const App: React.FC = () => {
             pipWindow.document.head.appendChild(node.cloneNode(true));
         });
 
-        // Remover barra branca e fundo padrão do PiP
+        // Forçar o corpo a ocupar TUDO sem margens e esconder scroll
         pipWindow.document.body.style.margin = '0';
         pipWindow.document.body.style.padding = '0';
-        pipWindow.document.body.style.backgroundColor = '#020617'; // slate-950
+        pipWindow.document.body.style.backgroundColor = '#020617';
         pipWindow.document.body.style.overflow = 'hidden';
+        pipWindow.document.body.style.display = 'flex';
+        pipWindow.document.body.style.justifyContent = 'stretch';
+        pipWindow.document.body.style.alignItems = 'stretch';
 
         const root = document.getElementById('root');
         if (root) {
+            // Ajustar o root para preencher a janela no PiP
+            root.style.width = '100%';
+            root.style.height = '100%';
+            
             pipWindow.document.body.appendChild(root);
             setIsPipActive(true);
 
             pipWindow.addEventListener('pagehide', () => {
+                root.style.width = '';
+                root.style.height = '';
                 document.body.appendChild(root);
                 setIsPipActive(false);
             });
@@ -227,25 +247,72 @@ const App: React.FC = () => {
     }
   };
 
-  if (!isAuthenticated) {
+  // Telas de Login/Seleção
+  if (!userRole) {
     return (
       <div className="h-screen w-full bg-slate-950 flex items-center justify-center p-4">
-        <form onSubmit={handleLogin} className="bg-slate-900 p-8 rounded-xl border border-slate-800 shadow-2xl w-full max-w-sm">
-          <div className="flex items-center gap-3 mb-6 justify-center">
-            <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-xl text-white">G</div>
-            <h1 className="text-2xl font-bold text-white tracking-tight">GantMeet</h1>
-          </div>
-          <p className="text-slate-400 text-sm text-center mb-6">Digite a senha da sala para entrar</p>
+        <div className="bg-slate-900 p-8 rounded-xl border border-slate-800 shadow-2xl w-full max-w-sm text-center">
+            <div className="flex items-center gap-3 mb-8 justify-center">
+                <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-xl text-white">G</div>
+                <h1 className="text-2xl font-bold text-white tracking-tight">GantMeet</h1>
+            </div>
+            <p className="text-slate-400 mb-6">Como você deseja entrar?</p>
+            <div className="flex flex-col gap-3">
+                <button onClick={() => setUserRole('professor')} className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg transition-all">
+                    Sou o Professor
+                </button>
+                <button onClick={() => setUserRole('aluno')} className="bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 rounded-lg transition-all border border-slate-700">
+                    Sou o Aluno
+                </button>
+            </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (userRole === 'professor' && !isAuthenticated) {
+    return (
+      <div className="h-screen w-full bg-slate-950 flex items-center justify-center p-4">
+        <form onSubmit={handleProfessorLogin} className="bg-slate-900 p-8 rounded-xl border border-slate-800 shadow-2xl w-full max-w-sm">
+          <button onClick={() => setUserRole(null)} className="text-slate-500 text-xs mb-4 hover:text-white">← Voltar</button>
+          <h2 className="text-xl font-bold text-white mb-6 text-center">Acesso do Professor</h2>
           <input 
             type="password" 
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="Senha"
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg py-3 px-4 text-white mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+            placeholder="Sua senha privada"
+            className="w-full bg-slate-800 border border-slate-700 rounded-lg py-3 px-4 text-white mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
             autoFocus
           />
           <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg transition-all">
-            Entrar na Aula
+            Validar Senha
+          </button>
+        </form>
+      </div>
+    );
+  }
+
+  if (!currentRoom) {
+    return (
+      <div className="h-screen w-full bg-slate-950 flex items-center justify-center p-4">
+        <form onSubmit={userRole === 'professor' ? handleCreateRoom : handleJoinRoom} className="bg-slate-900 p-8 rounded-xl border border-slate-800 shadow-2xl w-full max-w-sm">
+          <button onClick={() => { setIsAuthenticated(false); setUserRole(null); }} className="text-slate-500 text-xs mb-4 hover:text-white">← Voltar</button>
+          <h2 className="text-xl font-bold text-white mb-2 text-center">
+            {userRole === 'professor' ? 'Criar Sala' : 'Entrar na Sala'}
+          </h2>
+          <p className="text-slate-500 text-xs text-center mb-6">
+            {userRole === 'professor' ? 'Crie um código para compartilhar com seu aluno' : 'Digite o código que seu professor forneceu'}
+          </p>
+          <input 
+            type="text" 
+            value={roomCode}
+            onChange={(e) => setRoomCode(e.target.value)}
+            placeholder="Ex: aula-de-hoje"
+            className="w-full bg-slate-800 border border-slate-700 rounded-lg py-3 px-4 text-white mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500 uppercase font-mono"
+            autoFocus
+          />
+          <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg transition-all">
+            {userRole === 'professor' ? 'Abrir Sala' : 'Entrar na Aula'}
           </button>
         </form>
       </div>
@@ -253,15 +320,18 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen w-full bg-transparent justify-end overflow-hidden">
+    <div className={`flex h-screen w-full bg-transparent overflow-hidden ${isPipActive ? 'justify-stretch' : 'justify-end'}`}>
       {!isPipActive && (
         <div className="flex-1 bg-black/50 backdrop-blur-sm flex items-center justify-center text-white/20 p-8 hidden md:flex">
           <div className="text-center">
             <h1 className="text-4xl font-bold mb-4">GantMeet</h1>
             <p className="text-xl">O seu conteúdo de ensino aparecerá aqui.</p>
-            <p className="mt-4 text-sm bg-slate-800/50 p-4 rounded-lg border border-white/10">
-              Clique no ícone de "duas janelas" no topo da barra para flutuar o app.
-            </p>
+            <div className="mt-6 flex flex-col items-center gap-2">
+                <span className="text-xs bg-blue-600/30 text-blue-400 px-3 py-1 rounded-full border border-blue-500/30 uppercase font-bold tracking-widest">SALA: {currentRoom}</span>
+                <p className="text-sm bg-slate-800/50 p-4 rounded-lg border border-white/10 max-w-xs">
+                Clique no ícone de "duas janelas" no topo da barra para flutuar o app.
+                </p>
+            </div>
           </div>
         </div>
       )}
