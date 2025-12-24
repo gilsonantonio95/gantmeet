@@ -20,43 +20,43 @@ io.on('connection', (socket) => {
     socket.join(roomID);
     if (!rooms[roomID]) rooms[roomID] = [];
     rooms[roomID].push(socket.id);
-    
     const otherUser = rooms[roomID].find(id => id !== socket.id);
-    if (otherUser) {
-      socket.emit('other user', otherUser);
-    }
+    if (otherUser) socket.emit('other user', otherUser);
   });
 
-  // Eventos do WebRTC
   socket.on('offer', (payload) => {
     if (payload.target === "broadcast-in-room") {
         const roomID = Array.from(socket.rooms).find(r => r !== socket.id);
         if (roomID) socket.to(roomID).emit('offer', payload);
-    } else {
-        io.to(payload.target).emit('offer', payload);
-    }
+    } else { io.to(payload.target).emit('offer', payload); }
   });
 
-  socket.on('answer', (payload) => {
-    io.to(payload.target).emit('answer', payload);
-  });
-
-  socket.on('ice-candidate', (incoming) => {
-    io.to(incoming.target).emit('ice-candidate', incoming.candidate);
-  });
-
-  // Eventos de Chat
+  socket.on('answer', (payload) => io.to(payload.target).emit('answer', payload));
+  socket.on('ice-candidate', (incoming) => io.to(incoming.target).emit('ice-candidate', incoming.candidate));
+  
+  // Chat
   socket.on('send-chat-message', (message) => {
     const roomID = Array.from(socket.rooms).find(r => r !== socket.id);
     if (roomID) socket.to(roomID).emit('chat-message', message);
   });
 
-  // Eventos da Lousa Digital
-  socket.on('draw', (data) => {
+  // Whiteboard (Strokes and Images)
+  socket.on('stroke-start', (data) => {
     const roomID = Array.from(socket.rooms).find(r => r !== socket.id);
-    if (roomID) socket.to(roomID).emit('draw', data);
+    if (roomID) socket.to(roomID).emit('stroke-start', data);
   });
-
+  socket.on('stroke-update', (data) => {
+    const roomID = Array.from(socket.rooms).find(r => r !== socket.id);
+    if (roomID) socket.to(roomID).emit('stroke-update', data);
+  });
+  socket.on('image-add', (data) => {
+    const roomID = Array.from(socket.rooms).find(r => r !== socket.id);
+    if (roomID) socket.to(roomID).emit('image-add', data);
+  });
+  socket.on('object-remove', (id) => {
+    const roomID = Array.from(socket.rooms).find(r => r !== socket.id);
+    if (roomID) socket.to(roomID).emit('object-remove', id);
+  });
   socket.on('clear-board', () => {
     const roomID = Array.from(socket.rooms).find(r => r !== socket.id);
     if (roomID) socket.to(roomID).emit('clear-board');
@@ -69,9 +69,7 @@ io.on('connection', (socket) => {
   });
 });
 
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../dist/index.html'));
-});
+app.get('*', (req, res) => res.sendFile(path.join(__dirname, '../dist/index.html')));
 
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
