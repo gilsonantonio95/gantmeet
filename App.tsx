@@ -5,6 +5,8 @@ import { CallState } from './types';
 import io from 'socket.io-client';
 
 const App: React.FC = () => {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [password, setPassword] = useState('');
   const [callState, setCallState] = useState<CallState>(CallState.IDLE);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
@@ -16,9 +18,17 @@ const App: React.FC = () => {
   const localStreamRef = useRef<MediaStream | null>(null);
 
   const roomID = "aula-123";
+  const ACCESS_PASSWORD = "aula"; // Você pode mudar esta senha
 
   useEffect(() => {
-    // Connect to the same host as the frontend
+    // Check if already authenticated in this session
+    const auth = sessionStorage.getItem('isAuth');
+    if (auth === 'true') setIsAuthenticated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
     const socketUrl = window.location.hostname === 'localhost' ? 'http://localhost:8000' : window.location.origin;
     socketRef.current = io(socketUrl);
 
@@ -31,15 +41,23 @@ const App: React.FC = () => {
     socketRef.current.on('ice-candidate', handleIceCandidateMsg);
 
     return () => {
-      socketRef.current.disconnect();
+      socketRef.current?.disconnect();
     };
-  }, []);
+  }, [isAuthenticated]);
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password === ACCESS_PASSWORD) {
+      setIsAuthenticated(true);
+      sessionStorage.setItem('isAuth', 'true');
+    } else {
+      alert("Senha incorreta");
+    }
+  };
 
   const createPeer = (userID: string): RTCPeerConnection => {
     const peer = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' }
-      ]
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
 
     peer.onicecandidate = (e) => {
@@ -115,9 +133,7 @@ const App: React.FC = () => {
       });
       setLocalStream(stream);
       localStreamRef.current = stream;
-      
       socketRef.current.emit('join', roomID);
-      
       setCallState(CallState.ACTIVE);
     } catch (error) {
       console.error("Erro ao acessar mídia:", error);
@@ -134,7 +150,6 @@ const App: React.FC = () => {
     setRemoteStream(null);
     setScreenStream(null);
     setCallState(CallState.IDLE);
-    
     if (peerRef.current) {
       peerRef.current.close();
       peerRef.current = null;
@@ -152,9 +167,7 @@ const App: React.FC = () => {
       }
     } else {
       try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({
-          video: true
-        });
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
         setScreenStream(stream);
         if (peerRef.current) {
             const videoTrack = stream.getVideoTracks()[0];
@@ -188,9 +201,16 @@ const App: React.FC = () => {
             height: window.screen.height,
         });
 
+        // Copiar estilos
         document.querySelectorAll('link[rel="stylesheet"], style').forEach((node) => {
             pipWindow.document.head.appendChild(node.cloneNode(true));
         });
+
+        // Remover barra branca e fundo padrão do PiP
+        pipWindow.document.body.style.margin = '0';
+        pipWindow.document.body.style.padding = '0';
+        pipWindow.document.body.style.backgroundColor = '#020617'; // slate-950
+        pipWindow.document.body.style.overflow = 'hidden';
 
         const root = document.getElementById('root');
         if (root) {
@@ -206,6 +226,31 @@ const App: React.FC = () => {
         console.error("PiP error:", err);
     }
   };
+
+  if (!isAuthenticated) {
+    return (
+      <div className="h-screen w-full bg-slate-950 flex items-center justify-center p-4">
+        <form onSubmit={handleLogin} className="bg-slate-900 p-8 rounded-xl border border-slate-800 shadow-2xl w-full max-w-sm">
+          <div className="flex items-center gap-3 mb-6 justify-center">
+            <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-xl text-white">G</div>
+            <h1 className="text-2xl font-bold text-white tracking-tight">GantMeet</h1>
+          </div>
+          <p className="text-slate-400 text-sm text-center mb-6">Digite a senha da sala para entrar</p>
+          <input 
+            type="password" 
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Senha"
+            className="w-full bg-slate-800 border border-slate-700 rounded-lg py-3 px-4 text-white mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+            autoFocus
+          />
+          <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg transition-all">
+            Entrar na Aula
+          </button>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen w-full bg-transparent justify-end overflow-hidden">
