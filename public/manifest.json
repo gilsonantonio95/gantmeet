@@ -1,0 +1,15 @@
+{
+  "short_name": "GantMeet",
+  "name": "GantMeet Online Class",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3536/3536445.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#020617",
+  "background_color": "#020617"
+}
