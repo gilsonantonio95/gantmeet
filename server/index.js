@@ -27,13 +27,11 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Eventos do WebRTC
   socket.on('offer', (payload) => {
     if (payload.target === "broadcast-in-room") {
-        // Enviar para todos os outros na mesma sala
         const roomID = Array.from(socket.rooms).find(r => r !== socket.id);
-        if (roomID) {
-            socket.to(roomID).emit('offer', payload);
-        }
+        if (roomID) socket.to(roomID).emit('offer', payload);
     } else {
         io.to(payload.target).emit('offer', payload);
     }
@@ -47,8 +45,21 @@ io.on('connection', (socket) => {
     io.to(incoming.target).emit('ice-candidate', incoming.candidate);
   });
 
+  // Eventos de Chat
   socket.on('send-chat-message', (message) => {
-    socket.broadcast.emit('chat-message', message);
+    const roomID = Array.from(socket.rooms).find(r => r !== socket.id);
+    if (roomID) socket.to(roomID).emit('chat-message', message);
+  });
+
+  // Eventos da Lousa Digital
+  socket.on('draw', (data) => {
+    const roomID = Array.from(socket.rooms).find(r => r !== socket.id);
+    if (roomID) socket.to(roomID).emit('draw', data);
+  });
+
+  socket.on('clear-board', () => {
+    const roomID = Array.from(socket.rooms).find(r => r !== socket.id);
+    if (roomID) socket.to(roomID).emit('clear-board');
   });
 
   socket.on('disconnect', () => {

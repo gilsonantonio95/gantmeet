@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
+import { Whiteboard } from './components/Whiteboard';
 import { CallState } from './types';
 import io from 'socket.io-client';
 
@@ -13,15 +14,11 @@ const App: React.FC = () => {
   const [callState, setCallState] = useState<CallState>(CallState.IDLE);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-  const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
-  const [remoteScreenStream, setRemoteScreenStream] = useState<MediaStream | null>(null);
   const [isPipActive, setIsPipActive] = useState(false);
 
   const socketRef = useRef<any>();
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
-  const screenStreamRef = useRef<MediaStream | null>(null);
-  const screenSenderRef = useRef<RTCRtpSender | null>(null);
   const iceCandidatesQueue = useRef<RTCIceCandidate[]>([]);
 
   const ACCESS_PASSWORD = "aula";
@@ -56,10 +53,7 @@ const App: React.FC = () => {
 
   const createPeer = (userID: string): RTCPeerConnection => {
     const peer = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
-      ]
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
 
     peer.onicecandidate = (e) => {
@@ -72,21 +66,7 @@ const App: React.FC = () => {
     };
 
     peer.ontrack = (e) => {
-      const stream = e.streams[0];
-      if (e.transceiver.mid === '1' || e.track.label.includes('screen') || e.streams.length > 1) {
-          setRemoteScreenStream(stream);
-      } else {
-          setRemoteStream(stream);
-      }
-
-      if (e.streams && e.streams[0]) {
-          const stream = e.streams[0];
-          if (remoteStream && stream.id !== remoteStream.id) {
-              setRemoteScreenStream(stream);
-          } else if (!remoteStream) {
-              setRemoteStream(stream);
-          }
-      }
+      setRemoteStream(e.streams[0]);
     };
 
     return peer;
@@ -95,7 +75,7 @@ const App: React.FC = () => {
   const processIceQueue = () => {
     if (peerRef.current && iceCandidatesQueue.current.length > 0) {
         iceCandidatesQueue.current.forEach(candidate => {
-            peerRef.current?.addIceCandidate(candidate).catch(e => console.error(e));
+            peerRef.current?.addIceCandidate(candidate).catch(console.error);
         });
         iceCandidatesQueue.current = [];
     }
@@ -106,11 +86,6 @@ const App: React.FC = () => {
     if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(track => {
             peerRef.current?.addTrack(track, localStreamRef.current!);
-        });
-    }
-    if (screenStreamRef.current) {
-        screenStreamRef.current.getTracks().forEach(track => {
-            screenSenderRef.current = peerRef.current!.addTrack(track, screenStreamRef.current!);
         });
     }
     const offer = await peerRef.current.createOffer();
@@ -124,17 +99,11 @@ const App: React.FC = () => {
 
   async function handleReceiveOffer(payload: any) {
     peerRef.current = createPeer(payload.caller);
-    const desc = new RTCSessionDescription(payload.sdp);
-    await peerRef.current.setRemoteDescription(desc);
+    await peerRef.current.setRemoteDescription(new RTCSessionDescription(payload.sdp));
     processIceQueue();
     if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(track => {
             peerRef.current?.addTrack(track, localStreamRef.current!);
-        });
-    }
-    if (screenStreamRef.current) {
-        screenStreamRef.current.getTracks().forEach(track => {
-            screenSenderRef.current = peerRef.current!.addTrack(track, screenStreamRef.current!);
         });
     }
     const answer = await peerRef.current.createAnswer();
@@ -146,16 +115,14 @@ const App: React.FC = () => {
   }
 
   function handleAnswer(payload: any) {
-    const desc = new RTCSessionDescription(payload.sdp);
-    peerRef.current?.setRemoteDescription(desc).catch(e => console.error(e));
+    peerRef.current?.setRemoteDescription(new RTCSessionDescription(payload.sdp)).catch(console.error);
   }
 
   function handleIceCandidateMsg(candidate: RTCIceCandidate) {
-    const iceCandidate = new RTCIceCandidate(candidate);
     if (peerRef.current && peerRef.current.remoteDescription) {
-        peerRef.current.addIceCandidate(iceCandidate).catch(e => console.error(e));
+        peerRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(console.error);
     } else {
-        iceCandidatesQueue.current.push(iceCandidate);
+        iceCandidatesQueue.current.push(new RTCIceCandidate(candidate));
     }
   }
 
@@ -168,61 +135,24 @@ const App: React.FC = () => {
       socketRef.current.emit('join', currentRoom);
       setCallState(CallState.ACTIVE);
     } catch (error) {
-      console.error(error);
-      alert("Erro ao acessar mídia.");
+      alert("Permita acesso à câmera e microfone.");
       setCallState(CallState.IDLE);
     }
   };
 
   const stopMedia = () => {
     localStream?.getTracks().forEach(track => track.stop());
-    remoteStream?.getTracks().forEach(track => track.stop());
-    screenStream?.getTracks().forEach(track => track.stop());
     setLocalStream(null);
     setRemoteStream(null);
-    setScreenStream(null);
-    setRemoteScreenStream(null);
     setCallState(CallState.IDLE);
-    if (peerRef.current) {
-      peerRef.current.close();
-      peerRef.current = null;
-    }
-  };
-
-  const toggleScreenShare = async () => {
-    if (screenStream) {
-      screenStream.getTracks().forEach(track => track.stop());
-      if (screenSenderRef.current && peerRef.current) {
-          peerRef.current.removeTrack(screenSenderRef.current);
-          screenSenderRef.current = null;
-          const offer = await peerRef.current.createOffer();
-          await peerRef.current.setLocalDescription(offer);
-          socketRef.current.emit('offer', { target: "broadcast-in-room", sdp: peerRef.current.localDescription, caller: socketRef.current.id });
-      }
-      setScreenStream(null);
-      screenStreamRef.current = null;
-    } else {
-      try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-        setScreenStream(stream);
-        screenStreamRef.current = stream;
-        if (peerRef.current) {
-            const track = stream.getVideoTracks()[0];
-            screenSenderRef.current = peerRef.current.addTrack(track, stream);
-            const offer = await peerRef.current.createOffer();
-            await peerRef.current.setLocalDescription(offer);
-            socketRef.current.emit('offer', { target: "broadcast-in-room", sdp: peerRef.current.localDescription, caller: socketRef.current.id });
-        }
-        stream.getVideoTracks()[0].onended = () => toggleScreenShare();
-      } catch (err) { console.error(err); }
-    }
+    if (peerRef.current) { peerRef.current.close(); peerRef.current = null; }
   };
 
   const enterPiP = async () => {
     if (!('documentPictureInPicture' in window)) return;
     try {
         // @ts-ignore
-        const pipWindow = await window.documentPictureInPicture.requestWindow({ width: 180, height: window.screen.height });
+        const pipWindow = await window.documentPictureInPicture.requestWindow({ width: 220, height: window.screen.height });
         document.querySelectorAll('link[rel="stylesheet"], style').forEach((node) => {
             pipWindow.document.head.appendChild(node.cloneNode(true));
         });
@@ -246,26 +176,37 @@ const App: React.FC = () => {
   return (
     <div className="flex h-screen w-full bg-[#111] justify-end overflow-hidden">
       {!isPipActive && (
-        <div className="flex-1 bg-[#757575] flex items-center justify-center p-8 hidden md:flex">
-          <div className="text-center">
-            <h1 className="text-[64px] font-medium text-white/20 mb-2 tracking-tight">GantMeet</h1>
-            <p className="text-xl text-white/20 mb-12">O seu conteúdo de ensino aparecerá aqui.</p>
-            <div className="bg-[#4a4a4a] p-6 rounded-lg max-w-md mx-auto shadow-xl">
-              <p className="text-white/40 text-sm leading-relaxed">
-                Clique no ícone de "duas janelas" no topo da barra para flutuar o app.
-              </p>
+        <div className="flex-1 bg-[#1e1e1e] flex items-center justify-center hidden md:flex relative overflow-hidden">
+          {isAuthenticated && currentRoom ? (
+            <Whiteboard socket={socketRef.current} currentRoom={currentRoom} />
+          ) : (
+            <div className="text-center">
+              <h1 className="text-[64px] font-medium text-white/10 mb-2 tracking-tight">GantMeet</h1>
+              <p className="text-xl text-white/10">Acesse para iniciar a lousa digital.</p>
             </div>
-          </div>
+          )}
         </div>
       )}
+
       <Sidebar 
-        callState={callState} onStartCall={startMedia} onEndCall={stopMedia} onShareScreen={toggleScreenShare}
-        onToggleAlwaysOnTop={enterPiP} localStream={localStream} remoteStream={remoteStream}
-        isSharingScreen={!!screenStream} screenStream={screenStream} remoteScreenStream={remoteScreenStream}
-        isAuthenticated={isAuthenticated} setIsAuthenticated={setIsAuthenticated}
-        currentRoom={currentRoom} setCurrentRoom={setCurrentRoom}
-        password={password} setPassword={setPassword}
-        roomCode={roomCode} setRoomCode={setRoomCode}
+        callState={callState}
+        onStartCall={startMedia}
+        onEndCall={stopMedia}
+        onShareScreen={() => {}} // Função desativada
+        onToggleAlwaysOnTop={enterPiP}
+        localStream={localStream}
+        remoteStream={remoteStream}
+        isSharingScreen={false}
+        screenStream={null}
+        remoteScreenStream={null}
+        isAuthenticated={isAuthenticated}
+        setIsAuthenticated={setIsAuthenticated}
+        currentRoom={currentRoom}
+        setCurrentRoom={setCurrentRoom}
+        password={password}
+        setPassword={setPassword}
+        roomCode={roomCode}
+        setRoomCode={setRoomCode}
         onLogin={handleLogin}
       />
     </div>
