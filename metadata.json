@@ -1,0 +1,10 @@
+
+{
+  "name": "GantMeet - Sidebar de Aula Particular",
+  "description": "Um painel lateral PWA para videochamadas e aulas particulares, projetado para ficar sempre visível enquanto você compartilha sua tela.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "display-capture"
+  ]
+}
