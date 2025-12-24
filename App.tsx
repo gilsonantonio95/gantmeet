@@ -1,7 +1,8 @@
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { CallState } from './types';
+import io from 'socket.io-client';
 
 const App: React.FC = () => {
   const [callState, setCallState] = useState<CallState>(CallState.IDLE);
@@ -10,7 +11,101 @@ const App: React.FC = () => {
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [isPipActive, setIsPipActive] = useState(false);
 
-  // Initialize camera and mic
+  const socketRef = useRef<any>();
+  const peerRef = useRef<RTCPeerConnection | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+
+  const roomID = "aula-123";
+
+  useEffect(() => {
+    // Connect to the same host as the frontend
+    const socketUrl = window.location.hostname === 'localhost' ? 'http://localhost:8000' : window.location.origin;
+    socketRef.current = io(socketUrl);
+
+    socketRef.current.on('other user', (userID: string) => {
+      callUser(userID);
+    });
+
+    socketRef.current.on('offer', handleReceiveOffer);
+    socketRef.current.on('answer', handleAnswer);
+    socketRef.current.on('ice-candidate', handleIceCandidateMsg);
+
+    return () => {
+      socketRef.current.disconnect();
+    };
+  }, []);
+
+  const createPeer = (userID: string): RTCPeerConnection => {
+    const peer = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' }
+      ]
+    });
+
+    peer.onicecandidate = (e) => {
+      if (e.candidate) {
+        socketRef.current.emit('ice-candidate', {
+          target: userID,
+          candidate: e.candidate
+        });
+      }
+    };
+
+    peer.ontrack = (e) => {
+      setRemoteStream(e.streams[0]);
+    };
+
+    return peer;
+  };
+
+  const callUser = async (userID: string) => {
+    peerRef.current = createPeer(userID);
+    if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach(track => {
+            peerRef.current?.addTrack(track, localStreamRef.current!);
+        });
+    }
+
+    const offer = await peerRef.current.createOffer();
+    await peerRef.current.setLocalDescription(offer);
+
+    socketRef.current.emit('offer', {
+      target: userID,
+      caller: socketRef.current.id,
+      sdp: peerRef.current.localDescription
+    });
+  };
+
+  async function handleReceiveOffer(payload: any) {
+    peerRef.current = createPeer(payload.caller);
+    const desc = new RTCSessionDescription(payload.sdp);
+    await peerRef.current.setRemoteDescription(desc);
+
+    if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach(track => {
+            peerRef.current?.addTrack(track, localStreamRef.current!);
+        });
+    }
+
+    const answer = await peerRef.current.createAnswer();
+    await peerRef.current.setLocalDescription(answer);
+
+    socketRef.current.emit('answer', {
+      target: payload.caller,
+      sdp: peerRef.current.localDescription
+    });
+  }
+
+  function handleAnswer(payload: any) {
+    const desc = new RTCSessionDescription(payload.sdp);
+    peerRef.current?.setRemoteDescription(desc);
+  }
+
+  function handleIceCandidateMsg(candidate: RTCIceCandidate) {
+    const iceCandidate = new RTCIceCandidate(candidate);
+    peerRef.current?.addIceCandidate(iceCandidate);
+  }
+
   const startMedia = async () => {
     try {
       setCallState(CallState.CONNECTING);
@@ -19,9 +114,9 @@ const App: React.FC = () => {
         audio: true
       });
       setLocalStream(stream);
+      localStreamRef.current = stream;
       
-      // Simulating a remote student stream for the prototype
-      setRemoteStream(stream.clone()); 
+      socketRef.current.emit('join', roomID);
       
       setCallState(CallState.ACTIVE);
     } catch (error) {
@@ -39,19 +134,41 @@ const App: React.FC = () => {
     setRemoteStream(null);
     setScreenStream(null);
     setCallState(CallState.IDLE);
+    
+    if (peerRef.current) {
+      peerRef.current.close();
+      peerRef.current = null;
+    }
   };
 
   const toggleScreenShare = async () => {
     if (screenStream) {
       screenStream.getTracks().forEach(track => track.stop());
       setScreenStream(null);
+      if (peerRef.current && localStream) {
+          const videoTrack = localStream.getVideoTracks()[0];
+          const sender = peerRef.current.getSenders().find(s => s.track?.kind === 'video');
+          if (sender) sender.replaceTrack(videoTrack);
+      }
     } else {
       try {
         const stream = await navigator.mediaDevices.getDisplayMedia({
           video: true
         });
         setScreenStream(stream);
-        stream.getVideoTracks()[0].onended = () => setScreenStream(null);
+        if (peerRef.current) {
+            const videoTrack = stream.getVideoTracks()[0];
+            const sender = peerRef.current.getSenders().find(s => s.track?.kind === 'video');
+            if (sender) sender.replaceTrack(videoTrack);
+        }
+        stream.getVideoTracks()[0].onended = () => {
+            setScreenStream(null);
+            if (peerRef.current && localStream) {
+                const videoTrack = localStream.getVideoTracks()[0];
+                const sender = peerRef.current.getSenders().find(s => s.track?.kind === 'video');
+                if (sender) sender.replaceTrack(videoTrack);
+            }
+        };
       } catch (err) {
         console.error("Erro ao compartilhar tela:", err);
       }
@@ -67,7 +184,7 @@ const App: React.FC = () => {
     try {
         // @ts-ignore
         const pipWindow = await window.documentPictureInPicture.requestWindow({
-            width: 180, // Largura ainda mais estreita
+            width: 180,
             height: window.screen.height,
         });
 

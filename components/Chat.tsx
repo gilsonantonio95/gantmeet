@@ -1,13 +1,26 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Message } from '../types';
+import io from 'socket.io-client';
 
 export const Chat: React.FC = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    { id: '1', sender: 'professor', text: 'Olá!', timestamp: new Date() }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
+  const socketRef = useRef<any>();
+
+  useEffect(() => {
+    const socketUrl = window.location.hostname === 'localhost' ? 'http://localhost:8000' : window.location.origin;
+    socketRef.current = io(socketUrl);
+
+    socketRef.current.on('chat-message', (message: Message) => {
+      setMessages(prev => [...prev, message]);
+    });
+
+    return () => {
+      socketRef.current.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -26,18 +39,9 @@ export const Chat: React.FC = () => {
       timestamp: new Date()
     };
 
+    socketRef.current.emit('send-chat-message', newMessage);
     setMessages(prev => [...prev, newMessage]);
     setInputText('');
-
-    setTimeout(() => {
-      const reply: Message = {
-        id: (Date.now() + 1).toString(),
-        sender: 'aluno',
-        text: 'Ok!',
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, reply]);
-    }, 1000);
   };
 
   return (
