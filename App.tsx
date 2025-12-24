@@ -44,10 +44,7 @@ const App: React.FC = () => {
     const peer = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' }
+        { urls: 'stun:stun1.l.google.com:19302' }
       ]
     });
     peer.onicecandidate = (e) => {
@@ -96,11 +93,7 @@ const App: React.FC = () => {
     try {
       setCallState(CallState.CONNECTING);
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-            facingMode: 'user'
-        },
+        video: true,
         audio: true
       });
       setLocalStream(stream);
@@ -250,7 +243,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className={`flex h-screen w-full bg-transparent overflow-hidden ${isPipActive ? 'justify-stretch' : 'justify-center sm:justify-end'}`}>
+    <div className={`flex h-screen w-full bg-transparent overflow-hidden ${isPipActive ? 'justify-stretch' : 'justify-end'}`}>
       {!isPipActive && (
         <div className="flex-1 bg-black/50 backdrop-blur-sm flex items-center justify-center text-white/20 p-8 hidden md:flex">
           <div className="text-center">
